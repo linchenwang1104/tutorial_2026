@@ -1,0 +1,319 @@
+---
+title: "Homework-071"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: false
+    number_sections: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+# Homework-07
+
+## 1. 利用 QGIS 获取 Doubs 样点地理坐标系的过程，并给出对应点的地理坐标
+
+Doubs 数据集中的采样点原始坐标单位为米，但是数据本身没有明确给出坐标参考系。因此，不能直接判断这些米制坐标对应真实地理空间中的哪一个位置。为获得样点的真实地理坐标，本题采用 QGIS 的地理配准方法，将原始样点位置图与真实底图和 Doubs 河流图层进行匹配，最后重新标记样点并导出经纬度坐标。
+
+### 1.1 QGIS 操作过程
+
+具体步骤如下：
+
+1. 首先，将含有 Doubs 采样点坐标信息的 CSV 文件导入 QGIS。  
+   操作路径为：  
+   **图层（Layer） → 添加图层（Add Layer） → 添加分隔文本图层（Add Delimited Text Layer）**。  
+   选择目标 CSV 文件后，将 X 字段设置为横坐标，将 Y 字段设置为纵坐标，即可在 QGIS 中显示原始采样点。
+
+2. 将显示出来的采样点图层导出为图像文件。  
+   这一步的目的是把原始样点的相对空间分布保存成一张图像，便于后面与真实地图进行地理配准。
+
+3. 在 QGIS 中安装 **Freehand Raster Georeference** 插件。  
+   操作路径为：  
+   **插件（Plugins） → 管理并安装插件（Manage and Install Plugins）**，搜索并安装 `Freehand Raster Georeference`。
+
+4. 加载参考底图和 Doubs 河流图层。  
+   可以使用 QuickMapServices 加载 OSM Standard 底图，同时加载已经获得的 `doubs_river` 河流图层。  
+   为了导出经纬度坐标，将项目坐标系设置为：
+
+   \[
+   EPSG:4326 \quad \text{WGS 84}
+   \]
+
+5. 使用 **Freehand Raster Georeference** 导入前面保存的采样点图像。  
+   导入时选择栅格图像格式，使样点图像叠加在 OSM 底图和 Doubs 河流图层之上。
+
+6. 利用插件中的移动、缩放、旋转等功能调整采样点图像，使样点的整体分布尽可能与 Doubs 河流走向匹配。  
+   主要参考依据是：采样点应大致沿 Doubs 河流分布，且样点的弯曲趋势应与河流弯曲趋势一致。
+
+7. 新建一个点类型的矢量图层，用于重新标记样点。  
+   操作路径为：  
+   **图层（Layer） → 创建图层（Create Layer） → 新建 Shapefile 图层（New Shapefile Layer）**。  
+   几何类型选择 **Point**，坐标系选择 **EPSG:4326 - WGS 84**，并新建一个 `id` 字段用于记录样点编号。
+
+8. 选中新建的点图层，点击铅笔按钮进入编辑状态，然后使用“添加点要素（Add Point Feature）”工具，在已经配准好的采样点图像上逐个点击样点位置，并依次填写 `id` 编号。
+
+9. 所有样点标记完成后，保存编辑并退出编辑状态。
+
+10. 在属性表中使用字段计算器添加经纬度字段。  
+    新建经度字段 `lon`，表达式为：
+
+    ```qgis
+    $x
+    ```
+
+    新建纬度字段 `lat`，表达式为：
+
+    ```qgis
+    $y
+    ```
+
+    如果图层本身不是 EPSG:4326，而是其他投影坐标系，则应使用如下表达式转换为 WGS84 经纬度：
+
+    ```qgis
+    x(transform($geometry, layer_property(@layer, 'crs'), 'EPSG:4326'))
+    ```
+
+    ```qgis
+    y(transform($geometry, layer_property(@layer, 'crs'), 'EPSG:4326'))
+    ```
+
+11. 最后，将点图层导出为 CSV 表格。  
+    操作路径为：  
+    **右键点图层 → 导出（Export） → 另存为（Save Features As） → 格式选择 CSV**。  
+    导出的表格中即包含样点编号、经度和纬度信息。
+
+### 1.2 对应点的地理坐标
+
+```{r read-qgis-coordinates}
+library(readr)
+library(knitr)
+setwd("D:/Rcode")
+doubs_site_coords <- read_csv("data//gisdata/pointcoord_geo.csv")
+
+kable(
+  doubs_site_coords,
+  caption = "QGIS 地理配准后导出的 Doubs 样点经纬度坐标"
+)
+```
+
+
+---
+
+## 2. 利用 ggplot2 在 Doubs 河流区域 DEM 上绘制 Doubs 河流以及样点
+
+### 2.1 完整代码
+
+```{r plot-doubs-dem}
+library(ggplot2)
+library(sf)
+library(terra)
+library(dplyr)
+setwd("D:/Rcode")
+# 读取数据
+doubs_river <- st_read("data/gisdata/doubs_river.shp")
+doubs_pts   <- st_read("data/gisdata/sample_points.shp")
+doubs_dem   <- terra::rast("data/gisdata/doubs_dem.tif")
+
+# 统一坐标系
+# doubs_dem 是 SpatRaster，因此使用 terra::crs()
+terra::crs(doubs_dem) <- "EPSG:4326"
+
+# doubs_river 和 doubs_pts 是 sf 对象，因此使用 st_crs()
+st_crs(doubs_river) <- 4326
+st_crs(doubs_pts)   <- 4326
+
+# 将 DEM 转换为数据框
+dem_df <- as.data.frame(doubs_dem, xy = TRUE, na.rm = TRUE)
+
+# 为了避免 DEM 高程列名不统一，将第三列统一改名为 elevation
+names(dem_df)[3] <- "elevation"
+
+# 绘制 DEM、河流和样点
+ggplot() +
+  geom_raster(data = dem_df, aes(x = x, y = y, fill = elevation)) +
+  geom_sf(data = doubs_pts, aes(geometry = geometry), color = "red", size = 1.5) +
+  geom_sf(data = doubs_river, aes(geometry = geometry), color = "yellow", linewidth = 0.6) +
+  scale_fill_viridis_c(name = "Elevation") +
+  theme_minimal()
+```
+
+### 2.2 对应填空答案
+
+
+```{r fill-answer}
+dem_df <- as.data.frame(doubs_dem, xy = TRUE, na.rm = TRUE)
+
+terra::crs(doubs_dem) <- "EPSG:4326"
+st_crs(doubs_river) <- 4326
+st_crs(doubs_pts) <- 4326
+
+names(dem_df)[3] <- "elevation"
+
+ggplot() +
+  geom_raster(data = dem_df, aes(x = x, y = y, fill = elevation)) +
+  geom_sf(data = doubs_pts, aes(geometry = geometry), color = "red") +
+  geom_sf(data = doubs_river, aes(geometry = geometry), color = "yellow") +
+  theme_minimal()
+```
+
+其中：
+- `x = x` 表示 DEM 数据框中的横坐标；
+- `y = y` 表示 DEM 数据框中的纵坐标；
+- `fill = elevation` 表示用高程值控制栅格颜色；
+- `geometry = geometry` 表示 `sf` 图层使用自身的几何字段绘图。
+
+---
+
+## 3. 空间自相关、Rook/Queen 邻近权重、MSL 与 LMP
+
+### 3.1 Rook 邻近和 Queen 邻近的空间权重
+
+空间自相关分析中，首先需要定义样点之间的邻近关系。对于规则网格，常见的邻近关系包括 Rook 邻近和 Queen 邻近。
+
+#### Rook 邻近
+
+Rook 邻近只考虑与中心格子共享边界的邻居，也就是中心点上、下、左、右四个方向的格子。若将中心点周围的 3 × 3 网格按从左到右、从上到下的顺序排列，则 Rook 邻近可以表示为：
+
+\[
+[0, 1, 0, 1, 0, 1, 0, 1, 0]
+\]
+
+其权重矩阵可以表示为：
+
+\[
+W_{rook} =
+\begin{bmatrix}
+0 & 1 & 0 \\
+1 & 0 & 1 \\
+0 & 1 & 0
+\end{bmatrix}
+\]
+
+如果采用行标准化权重，由于 Rook 邻居共有 4 个，因此每个邻居的权重为：
+
+\[
+\frac{1}{4} = 0.25
+\]
+
+行标准化后的 Rook 权重矩阵为：
+
+\[
+W_{rook} =
+\begin{bmatrix}
+0 & 0.25 & 0 \\
+0.25 & 0 & 0.25 \\
+0 & 0.25 & 0
+\end{bmatrix}
+\]
+
+#### Queen 邻近
+
+Queen 邻近不仅考虑共享边界的格子，还考虑共享顶点的格子。也就是说，中心格子周围 8 个方向的格子都被视为邻居。按照同样的 3 × 3 顺序，Queen 邻近可以表示为：
+
+\[
+[1, 1, 1, 1, 0, 1, 1, 1, 1]
+\]
+
+其权重矩阵可以表示为：
+
+\[
+W_{queen} =
+\begin{bmatrix}
+1 & 1 & 1 \\
+1 & 0 & 1 \\
+1 & 1 & 1
+\end{bmatrix}
+\]
+
+如果采用行标准化权重，由于 Queen 邻居共有 8 个，因此每个邻居的权重为：
+
+\[
+\frac{1}{8} = 0.125
+\]
+
+行标准化后的 Queen 权重矩阵为：
+
+\[
+W_{queen} =
+\begin{bmatrix}
+0.125 & 0.125 & 0.125 \\
+0.125 & 0 & 0.125 \\
+0.125 & 0.125 & 0.125
+\end{bmatrix}
+\]
+
+因此，Rook 邻近更严格，只关注上下左右四个方向；Queen 邻近更宽松，同时考虑边邻接和角邻接。
+
+### 3.2 Moran's scatter plot 与 Lagged mean plot 的横纵坐标和直线含义
+
+Moran's scatter plot，简称 MSL，和 Lagged mean plot，简称 LMP，都是用来比较样点自身属性值与其空间滞后值之间关系的图。
+
+#### Moran's scatter plot，MSL
+
+Moran's scatter plot 通常使用标准化后的变量。
+
+- 横坐标：样点自身属性值的标准化值，记为 \(z_i\)；
+- 纵坐标：空间滞后值，即邻居标准化属性值的加权平均，记为 \(Wz_i\)。
+
+也就是说，MSL 比较的是：
+
+\[
+z_i \quad \text{和} \quad Wz_i
+\]
+
+MSL 图中的直线通常为线性拟合线，其斜率等于 Moran's I 指数。  
+如果斜率为正，说明高值周围倾向于出现高值、低值周围倾向于出现低值，表现为正空间自相关。  
+如果斜率为负，说明高值周围倾向于出现低值、低值周围倾向于出现高值，表现为负空间自相关。
+
+#### Lagged mean plot，LMP
+
+Lagged mean plot 主要比较样点自身值与邻居平均值之间的差异。
+
+- 横坐标：样点自身属性值，可以记为 \(x_i\)；
+- 纵坐标：邻居属性值的空间滞后平均值，可以记为 \(Wx_i\)。
+
+也就是说，LMP 比较的是：
+
+\[
+x_i \quad \text{和} \quad Wx_i
+\]
+
+LMP 图中的直线通常是 45° 参考线，即：
+
+\[
+y = x
+\]
+
+该直线表示样点自身值与邻居平均值相等。  
+若点落在直线附近，说明该样点与周围邻居较相似；若点明显偏离直线，说明该样点与周围邻居差异较大。  
+点在直线上方，说明邻居平均值大于自身值；点在直线下方，说明邻居平均值小于自身值。
+
+
+---
+
+## 4. 缓冲距离 buffer distance 的含义
+
+如果样点属性值存在空间自相关，说明某一个位置的属性值不仅与该位置自身有关，还可能受到周围样点或邻近区域的影响。因此，在进行空间预测时，可以将空间邻近信息转换成机器学习模型能够使用的输入变量。其中一种常见方法就是计算缓冲距离。
+
+缓冲距离是指从待预测网格或未知位置到已知样点之间的距离关系。它可以有不同的表达方式，例如：
+
+1. 每个预测网格到最近样点的最短距离；
+2. 每个预测网格到多个样点的平均距离；
+3. 每个预测网格是否落在样点的某一缓冲范围内，例如 100 m、500 m 或 1000 m；
+4. 每个预测网格周围一定缓冲范围内包含多少个样点，或邻近样点属性值的平均值。
+
+在空间机器学习建模中，缓冲距离的作用是将“空间邻近程度”转化为模型中的数值特征。一般来说，预测网格距离某个已知样点越近，二者之间的空间联系可能越强；距离越远，空间影响可能越弱。因此，缓冲距离可以帮助模型捕捉空间自相关结构，提高空间预测的合理性。
+
+
+也可以使用 `st_buffer()` 为样点创建缓冲区：
+
+综上，缓冲距离的本质是把样点与预测网格之间的空间距离关系转换为模型变量，从而将空间自相关信息引入机器学习预测过程。
