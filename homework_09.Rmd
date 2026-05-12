@@ -1,0 +1,131 @@
+---
+title: "Homework_09"
+author: "linchenwang"
+date: "`r Sys.Date()`"
+output: word_document
+---
+```{r setup, include=FALSE}
+library(reticulate)
+
+use_python("D:/softwares/Anaconda/envs/r-keras/python.exe", required = TRUE)
+
+py_config()
+```
+# 1. 无向网络的邻接矩阵、关联矩阵与网络指标
+
+## 1）邻接矩阵和关联矩阵
+
+邻接矩阵（adjacency matrix）用于表示节点与节点之间是否相连。对于无向网络，如果两个节点之间有边，则对应位置为 1；没有边则为 0。由于是无向网络，所以邻接矩阵是对称矩阵。
+
+```{r}
+# 节点
+nodes <- 1:5
+
+# 边信息
+edges <- matrix(c(
+  1, 2,
+  1, 3,
+  2, 3,
+  2, 4,
+  3, 5,
+  4, 5
+), ncol = 2, byrow = TRUE)
+
+# 构建邻接矩阵
+adj_mat <- matrix(0, nrow = length(nodes), ncol = length(nodes),
+                  dimnames = list(nodes, nodes))
+
+for (i in 1:nrow(edges)) {
+  a <- as.character(edges[i, 1])
+  b <- as.character(edges[i, 2])
+  adj_mat[a, b] <- 1
+  adj_mat[b, a] <- 1
+}
+
+adj_mat
+```
+
+
+关联矩阵（incidence matrix）用于表示节点与边之间的关系。矩阵的行表示节点，列表示边。如果某个节点属于某条边，则对应位置为 1，否则为 0。
+
+```{r}
+# 构建关联矩阵
+edge_names <- paste0("e", 1:6)
+inc_mat <- matrix(0, nrow = length(nodes), ncol = nrow(edges),
+                  dimnames = list(nodes, edge_names))
+
+for (i in 1:nrow(edges)) {
+  inc_mat[as.character(edges[i, 1]), i] <- 1
+  inc_mat[as.character(edges[i, 2]), i] <- 1
+}
+
+inc_mat
+```
+
+
+## 2）节点 2 的度及其生态学含义
+
+节点 2 与节点 1、节点 3 和节点 4 相连，因此节点 2 的度为：
+
+```{r}
+degree_node_2 <- sum(adj_mat["2", ])
+degree_node_2
+```
+
+所以，节点 2 的 degree = 3。
+
+节点度（degree）表示一个顶点(物种）与其他顶点（物种）交互作用（连接的边）的数量。在生态网络中，节点度可以反映某个物种、OTU 或生态单元与其他对象发生联系的数量。节点度越高，说明该节点与网络中更多节点存在关系，可能具有更高的生态重要性，也可能是网络中的关键节点或 hub 节点。例如在物种互作网络中，高度节点可能代表与许多物种发生互作的核心物种；在微生物共现网络中，高度 OTU 可能代表与多个类群共同变化的潜在关键类群。
+根据度可评价物种的重要性，度低的顶点或物种，属于特异种，度高的物种，属于广布种。在微生物群落中，度高的顶点充当信息交流角色。另外，根据度分布，可初步了解一些网络的特性，顶点的度一般满足幂分布，具有Scale-free特性，即所谓Small-world特性，但真实的生态网络一般偏离这种分布。
+
+## 3）网络连接度及其生态学含义
+网络的连接度是用来度量现实链接与潜在链接的比例。对于一个顶点数为S的网络，已有链接（作用) 数为L,则链接度为L/m（m为可能链接数，它取决于网络类型，在unipartite directed网络中，m是S²,也有的用L/[S*(S-1)].
+
+```{r}
+S <- 5
+L <- 6
+connectance <- L / (S * (S -1) / 2)
+connectance
+```
+
+所以，该网络的连接度为 0.6。
+网络连接度是群落对于干扰敏感性的一个很好的估计，连通性高的网络，有较强的抗干扰能力。另外，网络连通性也与群落动态密切相关。
+
+生态学上，连接度是网络水平的结构特征，用于表示整个生态网络中节点之间联系的紧密程度。连接度越高，说明网络中物种或生态单元之间的联系越密集，网络结构越复杂；连接度越低，说明网络中节点之间的联系较稀疏。在生态网络分析中，连接度常用于比较不同群落、不同环境处理或不同时间下生态网络结构的复杂性和紧密程度。
+
+# 2. 基于 Keras 定义多层感知机模型
+
+## 1）补充多层感知机模型代码
+
+根据图 2，该多层感知机模型包括：
+
+- 输入层：2 个输入变量，即 x0 和 x1；图中的 1 表示偏置项，不计入 input_shape。
+- 第一隐藏层：4 个神经元。
+- 第二隐藏层：3 个神经元。
+- 输出层：1 个神经元，用于输出 y。
+
+
+```{python}
+from tensorflow import keras
+from tensorflow.keras import layers
+
+model = keras.Sequential([
+    layers.Dense(units=4, activation='relu', input_shape=(2,)),
+    layers.Dense(units=3, activation='relu'),
+    layers.Dense(units=1),
+])
+model.summary()
+```
+
+
+
+## 2）ReLU 激活函数的作用，以及输出层无激活函数的含义
+
+激活函数的主要作用是为神经网络引入非线性。如果没有激活函数，多层神经网络本质上仍然只能表示线性变换，即使堆叠很多层，也难以学习复杂的非线性关系。ReLU 的表达式为：
+
+\[
+f(x) = max(0, x)
+\]
+
+它的含义是：当输入小于 0 时，输出为 0；当输入大于 0 时，输出等于输入本身。ReLU 计算简单，能够缓解部分梯度消失问题，因此常用于隐藏层。
+
+输出层没有指定激活函数，表示输出层使用线性输出（linear output）。也就是说，模型的最后输出不被限制在 0 到 1 之间，也不被转换为类别概率，而是可以输出任意连续数值。因此，这种设置通常用于回归问题，例如预测一个连续变量 y。如果是二分类问题，输出层通常使用 sigmoid 激活函数；如果是多分类问题，输出层通常使用 softmax 激活函数。
