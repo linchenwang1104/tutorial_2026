@@ -1,0 +1,243 @@
+---
+title: "homework_06"
+author: "linchenwang"
+date: "2026-04-17"
+output: word_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 5
+)
+```
+1. 在QGIS中安装Quickmapservices和quickOSM插件，利用它们访问和下载doubs的Openstreetmap数据，通过选择特征获得doubs，并将图层以doubs_river.shp格式，保存到postgresql数据库中。
+    ### 1.1 安装插件
+    打开 QGIS，依次点击：
+    **插件 → 管理并安装插件**
+    搜索并安装：
+    - QuickMapServices
+    - QuickOSM
+    安装完成后，菜单栏中会出现对应插件。
+    ### 1.2 加载底图
+    点击：
+    **Web → QuickMapServices → OSM → OSM Standard**
+    加载 OpenStreetMap 底图，用于辅助定位 Doubs 河流。
+    ### 1.3 使用 QuickOSM 下载 Doubs 数据
+    点击：
+    **矢量 → QuickOSM → QuickOSM**
+    设置如下：
+    - Key：`waterway`
+    - Value：`river`
+    - In：选择合适范围,筛选字段 `name` 为 `Doubs
+    - 点击 Run query
+    ###1.4 导出doubs_river.shp
+    选中 Doubs 河流后，右键图层：
+      导出 → 保存选中要素为
+      格式选择：
+      ESRI Shapefile
+      文件名：doubs_river.shp
+      坐标系使用 WGS84，即 EPSG:4326
+     ### 1.5 保存到 PostgreSQL 数据库
+     右键 doubs_river.shp 图层：
+      导出 → 保存要素为
+      格式选择：
+      PostgreSQL
+      数据库：选择已连接的 PostgreSQL/PostGIS 数据库
+      表名：doubs_river
+      几何类型：LineString
+      坐标系：EPSG:4326
+      最终可在 PostgreSQL 中得到 doubs_river 表。
+      
+2. 以R内置的doubs数据集为例，进行探索分析（Exploratory Data Analysis, EDA），并回答如下问题，涉及代码嵌入文本中：
+1）将doubs数据集导入R，查看其中的fish表中各个观察站点的鱼群，从fish、env、xy表中删除无鱼站点，形成新数据表xx_clean。
+```{r}
+library(ade4)
+library(vegan)
+library(cluster)
+library(dplyr)
+
+###导入 doubs 数据集，并删除无鱼站点
+data(doubs, package = "ade4")
+
+fish <- doubs$fish
+env  <- doubs$env
+xy   <- doubs$xy
+
+dim(fish)
+dim(env)
+dim(xy)
+
+#查看每个观察站点的鱼类总丰度
+fish_abund <- rowSums(fish)
+fish_abund
+
+#找出无鱼站点
+no_fish_site <- which(fish_abund == 0)
+no_fish_site
+
+#可以看到第 8 号样点为无鱼样点，因此需要从 fish、env 和 xy 中删除该样点。
+fish_clean <- fish[fish_abund > 0, ]
+env_clean  <- env[fish_abund > 0, ]
+xy_clean   <- xy[fish_abund > 0, ]
+
+xx_clean <- list(
+  fish = fish_clean,
+  env  = env_clean,
+  xy   = xy_clean
+)
+
+dim(fish_clean)
+dim(env_clean)
+dim(xy_clean)
+
+```
+
+2）对于fish_clean，先执行hellinger转换，然后计算样地/样点的鱼群之间的欧式距离，进行相似性分析（即Q-mode），并绘制ward最小方差的聚类图。
+```{r}
+###由于鱼类丰度数据属于群落数据，直接使用原始丰度可能受到优势种影响，因此先进行 Hellinger 转换。
+spe_hel <- vegan::decostand(fish_clean, method = "hellinger")
+head(spe_hel)
+
+###计算样点之间的欧式距离
+spe_dist <- dist(spe_hel, method = "euclidean")
+spe_dist
+
+#使用 Ward 最小方差法进行聚类分析：
+spe_clust <- hclust(spe_dist, method = "ward.D2")
+
+plot(  spe_clust,
+  main = "Ward clustering of fish communities",
+  xlab = "Sampling sites",
+  ylab = "Height"
+)
+```
+结果解释：该聚类图表示不同样点之间鱼类群落组成的相似程度。
+
+距离越近、越早聚在一起的样点，说明鱼类组成越相似；距离越远、越晚聚在一起的样点，说明鱼类群落差异越大。
+
+
+3）对于env_clean，可通过主成分分析（principle component analysis, PCA），开展列变量之间相关性分析（R-mode），并绘制和解释PCA双序图。
+① 对删除无鱼的第8号样本后的env_clean进行标准化（均值为0，标准差为1），执行如下代码：
+```{r}
+env_z <- vegan::decostand(env_clean, "standardize")
+head(env_z)
+```
+② 比较R自带的stats包里的prcomp()函数和vegan包rda()函数对标准化后的env_z进行主成分分析，探讨变量相关性，并绘制双标图，代码如下：
+```{r}
+pca_env_prcomp <- prcomp(env_z) 
+biplot(pca_env_prcomp, scale = 0)
+
+pca_env_rda <- vegan::rda(env_z)
+biplot(pca_env_rda, scaling = 2)
+
+```
+③ 从样点或变量角度，解释步骤②产生的双标图biplot(pca_env_rda)的含义。
+     
+     biplot(pca_env_rda) 是对 env_clean 环境变量进行 PCA 后得到的双标图。图中同时展示了样点分布和 环境变量之间的关系。
+    
+    从样点角度看，图中的数字代表不同采样点。样点之间距离越近，说明这些样点的环境条件越相似；样点之间距离越远，说明环境条件差异越大。图中可以看到，1—7 号样点主要分布在 PC1 负方向，说明这些样点具有相似的环境特征；而 23、25、30 等样点距离其他样点较远，说明它们的环境条件相对特殊，可能是环境梯度变化较大的站点。
+    
+    从变量角度看，红色箭头代表环境变量。箭头越长，说明该变量对前两个主成分轴的贡献越大；箭头越短，说明该变量在 PC1 和 PC2 上的解释作用较弱。两个变量箭头夹角越小，说明变量之间正相关越强；夹角接近 90°，说明相关性较弱；方向相反则说明变量之间可能存在负相关。
+    
+    在该图中，flo、dfs、har 等变量箭头方向相近，说明这些变量之间可能存在较强的正相关关系。amm、pho、bdo 等变量也方向相近，说明它们之间也可能具有正相关关系。oxy 的箭头方向与 amm、pho、bdo 大致相反，说明溶解氧可能与氨氮、磷酸盐、生化需氧量等污染相关变量呈负相关关系。
+    
+    从主成分轴解释来看，PC1 主要反映了从上游到下游的环境梯度。PC1 负方向的样点多与较高的海拔、坡度或溶解氧等条件有关；PC1 正方向的样点则更多与流量、距离源头距离、营养盐或污染指标有关。PC2 则进一步区分了不同环境变量组合下的样点差异，例如部分样点在 PC2 正方向上可能受 pH、流量等变量影响较大，而 PC2 负方向上则可能与营养盐、有机污染等变量有关。
+    
+    因此，该 PCA 双标图说明 Doubs 河流不同样点之间存在明显的环境梯度变化，不同环境变量之间也存在一定相关结构。PCA 可以帮助我们识别主要环境梯度，并为后续鱼类群落与环境关系的 RDA 分析提供基础。
+         
+4）对于fish与env之间关系的冗余分析（redundancy analysis，RDA），需要选择正确排序模型（单峰或线性模型）以及选择合适的env_z变量，根据最终结果绘图并解释。
+① 针对spe_hel与env_z关系分析，需要选择线性模型（RDA）和单峰模型（Canonical Correspondence Analysis，CCA），通过运行如下代码，获得第一轴DCA1长度，当DCA1_< 3_，选择用RDA，当DCA1_> 4_，选择CCA。
+```{r}
+dca_res <- vegan::decorana(spe_hel)
+dca_res
+#查看 DCA 第一轴长度
+#据 decorana() 输出结果可知，Axis lengths 中 DCA1 = 3.8978。
+```
+通过 DCA 分析可知，第一轴 DCA1 的梯度长度为 3.8978。根据排序模型选择标准，当 DCA1 < 3 时，物种响应更接近线性模型，适合使用 RDA；当 DCA1 > 4 时，物种响应更接近单峰模型，适合使用 CCA；当 DCA1 介于 3 和 4 之间时，RDA 和 CCA 均可尝试。
+    
+    本结果中 DCA1 = 3.8978，处于 3 和 4 之间，并且接近 4，说明鱼类群落对环境梯度的响应具有一定单峰特征，但尚未明显超过 4。因此，RDA 和 CCA 理论上都可以使用。考虑到本作业已经对 fish_clean 进行了 Hellinger 转换，Hellinger 转换后的群落数据更适合基于欧式距离的线性排序方法，所以后续采用 RDA 分析鱼类群落与环境变量之间的关系。
+
+② 如果进行spe_hel的RDA分析，通过手动删除env_z中___共线性强的_变量或者通过vegan包中ordiR2step()函数最大化______调整后的 R²，即 adjusted R²__，最终达到选择变量的目的。
+```{r}
+# ===============================
+# VIF 共线性筛选
+# ===============================
+
+env_vif <- as.data.frame(env_z)
+
+repeat {
+  rda_temp <- vegan::rda(spe_hel ~ ., data = env_vif)
+  vif_values <- vegan::vif.cca(rda_temp)
+  
+  print(vif_values)
+  
+  max_vif <- max(vif_values)
+  
+  if (max_vif < 10) {
+    break
+  }
+  
+  remove_var <- names(which.max(vif_values))
+  
+  cat("删除高 VIF 变量:", remove_var, 
+      "，VIF =", max_vif, "\n")
+  
+  env_vif <- env_vif[, !(names(env_vif) %in% remove_var)]
+}
+
+env_vif
+#删除了变量dfs、amm、pho，保留了变量alt、slo、flo、pH、har、nit、oxy、bdo
+
+
+#  基于 VIF 筛选后的环境变量进行 RDA 逐步选择
+rda_null <- vegan::rda(spe_hel ~ 1, data = env_vif)##建立空模型
+rda_full_vif <- vegan::rda(spe_hel ~ ., data = env_vif)
+
+```
+
+```{r}
+
+#逐步选择变量
+set.seed(123)
+
+rda_step <- vegan::ordiR2step(
+  rda_null,
+  scope = formula(rda_full_vif),
+  direction = "forward",
+  permutations = 999,
+  trace = FALSE
+)
+
+rda_step
+
+#查看最终模型
+summary(rda_step)
+
+# RDA 整体模型显著性检验
+anova(rda_step, permutations = 999)
+
+# RDA 各排序轴显著性检验
+anova(rda_step, by = "axis", permutations = 999)
+
+# 各环境变量显著性检验
+anova(rda_step, by = "terms", permutations = 999)
+```
+
+```{r}
+#绘制最终 RDA 图
+plot(
+  rda_step,
+  scaling = 2,
+  main = "RDA of fish communities and environmental variables"
+)
+
+```
+最终 RDA 模型筛选出的环境变量为 alt、oxy 和 bdo，说明海拔、溶解氧和生化需氧量是解释 Doubs 鱼类群落组成差异的重要环境因子。整体模型置换检验结果显示 Pr(>F)=0.001，说明该 RDA 模型达到显著水平。各排序轴检验结果表明 RDA1、RDA2 和 RDA3 均显著，说明筛选出的环境变量能够有效解释鱼类群落在多个环境梯度上的变化。
+
+从 RDA 图来看，样点之间距离越近，表示鱼类群落组成越相似；距离越远，则说明群落组成差异越大。环境变量箭头表示变量增加的方向，箭头越长，说明该变量对鱼类群落分布的解释作用越强。样点如果分布在某个环境变量箭头方向上，说明该样点受该环境因子影响较大。物种如果靠近某个环境变量箭头方向，说明该物种可能更适应该环境条件。
+
+因此，Doubs 河流鱼类群落的空间分布主要受到海拔梯度、水体溶解氧条件以及有机污染程度的共同影响。其中 alt 可代表河流上游—下游的地形梯度，oxy 反映水体含氧状况，bdo 则与有机污染和水体耗氧过程有关。
+
